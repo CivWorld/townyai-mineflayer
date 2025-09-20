@@ -40,3 +40,6 @@ bot.on('error', err => {
   //  // You could implement reconnection logic here
   }
 });
+
+
+// this bot purposefully lacks any logic outside of join verification, and is used for testing purposes. 
