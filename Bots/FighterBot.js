@@ -3,6 +3,7 @@ const mcData     = require('minecraft-data')('1.21.4')  // adjust to match your 
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const armorManager = require('mineflayer-armor-manager')
 const Vec3 = require('vec3')
+const utils = require('./shared/utils')
 
 function getArg(flag, fallback = undefined) {
 const i = process.argv.indexOf(flag);
@@ -317,7 +318,7 @@ bot.on('physicsTick', async () => {
                 attack_target()
             }
             // 7. Move to target 
-            /*else*/ if(target && target.position){
+            else if(target && target.position){
                 move_to_target()
             }
         }
@@ -344,12 +345,12 @@ function gear(){
     bot.armorManager.equipAll().catch(() => {})
     
     // Equip strongest sword
-    getStrongestSword()
+    utils.getStrongestSword(bot)
     
     // Reset state after gearing cooldown and ensure sword is equipped
     if (canDoAction("gearing")) {
         state = "IDLE"
-        getStrongestSword()
+        utils.getStrongestSword(bot)
     }
 }
 
@@ -362,7 +363,7 @@ async function heal() {
         const splashPotions = bot.inventory.items().filter(item => item.name === 'splash_potion');
         let foundPotion = null;
         for (const item of splashPotions) {
-            const potionId = getPotionId(item);
+            const potionId = utils.getPotionId(item);
             if (potionId === 25) {
                 foundPotion = item;
                 break;
@@ -383,7 +384,7 @@ async function heal() {
             // Turn away from target if there is one and run away while healing
             if (target) {
                 // Calculate direction away from target
-                await lookAwayFromTarget()
+                await utils.lookAwayFromTarget(bot, target)
                 
                 // Start sprinting away from target
                 bot.setControlState('sprint', true)
@@ -406,7 +407,7 @@ async function heal() {
 
             // Immediately resume normal state after healing and re-equip sword
             state = "IDLE"
-            getStrongestSword()
+            utils.getStrongestSword(bot)
             //console.log('Healing complete, resuming combat')
         } catch (error) {
             //console.log('Error during healing:', error.message)
@@ -414,7 +415,7 @@ async function heal() {
             bot.setControlState('sprint', false)
             bot.setControlState('forward', false)
             state = "IDLE"
-            getStrongestSword()
+            utils.getStrongestSword(bot)
         }
     }
 }
@@ -425,7 +426,7 @@ async function eat() {
     // Start eating if not already eating and cooldown allows
     if (state !== "EATING" && canDoAction("eating")) {
         state = "EATING"
-        const food = await getBestFood()
+        const food = await utils.getBestFood(bot)
         
         if (!food) {
             //console.log('No valid food found in inventory')
@@ -436,7 +437,7 @@ async function eat() {
         //console.log('Started eating food - will jump and face away from target')
         if (target && target.position) { // Face away from target and move forward
             try {
-                await lookAwayFromTarget()
+                await utils.lookAwayFromTarget(bot, target)
                 bot.setControlState('forward', true);
                 bot.setControlState('jump', true);
                 bot.setControlState('jump', false);
@@ -450,7 +451,7 @@ async function eat() {
     if (bot.food > HUNGER_THRESHOLD) {
         //console.log('No longer hungry, stopping eating')
         state = "IDLE"
-        getStrongestSword()
+        utils.getStrongestSword(bot)
         return
     }
     else{
@@ -464,7 +465,7 @@ async function eat() {
 function return_to_ally(){
     state = "RETURNING TO ALLY"
     
-    const nearestAlly = getNearestAlly()
+    const nearestAlly = utils.getNearestAlly(bot, ALLY_LIST)
     if (!nearestAlly) {
         //console.log("No ally found to return to")
         state = "IDLE"
@@ -675,13 +676,6 @@ function hasLineOfSight(targetEntity, stepSize = 0.1) {
     return true;
 }
 
-async function lookAwayFromTarget(){
-    if (!target || !target.position) return;
-    const awayFromTarget = bot.entity.position.minus(target.position).normalize();
-    const lookPosition = bot.entity.position.plus(awayFromTarget.scaled(5));
-    bot.lookAt(lookPosition, true).catch(() => {});
-}
-
 function checkForClosestTarget() {
     const players = Object.values(bot.players)
         .map(player => player.entity)
@@ -689,7 +683,7 @@ function checkForClosestTarget() {
             entity && 
             entity.type === 'player' &&
             entity.username !== bot.username &&
-            !isAlly(entity.username) &&
+            !utils.isAlly(entity.username, ALLY_LIST) &&
             entity.position
         )
     
@@ -731,32 +725,11 @@ function checkForClosestTarget() {
     }
 }
 
-function isAlly(playerName) {
-    if (!playerName) return false;
-    return ALLY_LIST.some(ally => ally.toLowerCase() === playerName.toLowerCase());
-}
 
-function getNearestAlly() {
-    const allies = bot.players
-    let nearestAlly = null
-    let nearestDistance = Infinity
-    
-    for (const playerName in allies) {
-        const player = allies[playerName]
-        if (isAlly(playerName) && player.entity && player.entity.position) {
-            const distance = bot.entity.position.distanceTo(player.entity.position)
-            if (distance < nearestDistance) {
-                nearestDistance = distance
-                nearestAlly = player.entity
-            }
-        }
-    }
-    
-    return nearestAlly
-}
+
 
 function isTooFarFromAlly() {
-    const nearestAlly = getNearestAlly()
+    const nearestAlly = utils.getNearestAlly(bot, ALLY_LIST)
     if (!nearestAlly) {
         return false // No ally online, don't worry about distance
     }
@@ -782,81 +755,33 @@ function hasItemInInventory(itemName) {
     return bot.inventory.items().some(item => item.name === itemName)
 }*/
 
-function getPotionId(item) { //unused
-    const comp = item.components?.find(c => c.type === 'potion_contents')
-    return comp?.data?.potionId
-}
+
 
 function canHealSelf() { //TO BE REPLACED BY hasPotion(ID)
     // Only return true if splash potion with potionId 25 is present
     const splashPotions = bot.inventory.items().filter(item => item.name === 'splash_potion');
     for (const item of splashPotions) {
-        if (getPotionId(item) === 25) return true;
+        if (utils.getPotionId(item) === 25) return true;
     }
     return false;
 }
 
 function hasPotion(id) {
-    // Only return true if splash potion with potionId 25 is present
     const potion= bot.inventory.items().filter(item => item.name === 'potion');
     for (const item of potion) {
-        if (getPotionId(item) === id) return true;
+        console.log(utils.getPotionId(item))
+        if (utils.getPotionId(item) === id) return true;
     }
     
     return false;
 }
 
-// Check if bot has any valid food
+// Check if bot has any valid food (wtf is this lmao)
 function canEatFood() {
-    return getBestFood()
+    return utils.getBestFood(bot)
 }
 
 // Find the best food item to eat (prioritizes higher nutrition)
-function getBestFood() {
-    
-    const foodOrder = [
-        'enchanted_golden_apple',
-        'golden_apple',
-        'golden_carrot',
-        'cooked_beef', // steak
-        'cooked_porkchop',
-        'cooked_chicken',
-        'cooked_rabbit',
-        'cooked_mutton',
-        'bread',
-        'cooked_cod',
-        'baked_potato',
-        
-    ]
-
-    const foods = bot.inventory.items().filter(item => foodOrder.includes(item.name))
-    if (foods.length === 0) return false
-    
-    foods.sort((a, b) => foodOrder.indexOf(a.name) - foodOrder.indexOf(b.name))
-    bestFood = foods[0]
-    bot.equip(bestFood, 'hand').catch(() => {})
-    return true
-}
-
-function getStrongestSword() {
-    const swordOrder = [
-        'netherite_sword',
-        'diamond_sword',
-        'iron_sword',
-        'stone_sword',
-        'golden_sword',
-        'wooden_sword'
-    ]
-    const swords = bot.inventory.items().filter(item => swordOrder.includes(item.name))
-    if (swords.length === 0) return false
-
-    swords.sort((a, b) => swordOrder.indexOf(a.name) - swordOrder.indexOf(b.name))
-    strongestSword = swords[0]
-    if (strongestSword && bot.heldItem !== strongestSword) {
-        bot.equip(strongestSword, 'hand').catch(() => {})
-    }
-}
-
 function canDoAction(action){
     const now = Date.now();
     const last = LASTACTION.get(action) || 0;
@@ -918,7 +843,7 @@ async function DrinkBuffPotions(){
     for (const { potion_id, effect_id } of potionsToDrink) {
         if(!bot.entity.effects[effect_id]){
             console.log("missing " + effect_id)
-            const potions = bot.inventory.items().filter(item => item.name === 'potion' && getPotionId(item) === potion_id);
+            const potions = bot.inventory.items().filter(item => item.name === 'potion' && utils.getPotionId(item) === potion_id);
             if (potions.length > 0) {
                 await bot.equip(potions[0], 'hand');
                 switch (effect_id) {
