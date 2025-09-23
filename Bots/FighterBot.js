@@ -94,18 +94,23 @@ COOLDOWN.set('movementSwing',75) // ~13 CPS for movement swinging
 COOLDOWN.set('lookAround',2000) // 2 seconds between look around actions
 COOLDOWN.set('targetCheck',2000) // 2 seconds between target checks
 COOLDOWN.set('strafeDecision',4000) // 4 seconds between strafe decisions
+COOLDOWN.set('flagGoal',15000) // 15 seconds between flag goal changes
 //COOLDOWN.set('drinkStrength', 95000); // 1 min 35 sec
 //COOLDOWN.set('drinkSpeed', 95000); // 1 min 35 sec
 //COOLDOWN.set('drinkFireRes', 480000); // 8 min
 
 // Ally system constants
-var ALLY_LIST = ['ADMINBOT'] // Players the bot will not attack
-const ALLY_MAX_DISTANCE = 30 // Maximum distance from allied players
+//var ALLY_LIST = ['ADMINBOT'] // Players the bot will not attack
+//const ALLY_MAX_DISTANCE = 30 // Maximum distance from allied players
 
 // Flag queue system
-var flagQueue = [];
+//var flagQueue = [];
 
-
+const ctx = {
+    allies: ['ADMINBOT'],   // replaces ALLY_LIST
+    allyMaxDistance: 30,    // replaces ALLY_MAX_DISTANCE
+    flags: [],              // replaces flagQueue
+  }
 
 //INTERRUPT TRIGGERS
 bot.on("death", () => {
@@ -199,8 +204,8 @@ bot.on('chat', (username, message) => {
                     let added = [];
                     let already = [];
                     for (const allyName of allyNames) {
-                        if (!ALLY_LIST.some(ally => ally.toLowerCase() === allyName.toLowerCase())) {
-                            ALLY_LIST.push(allyName);
+                        if (!ctx.allies.some(ally => ally.toLowerCase() === allyName.toLowerCase())) {
+                            ctx.allies.push(allyName);
                             added.push(allyName);
                         } else {
                             already.push(allyName);
@@ -218,9 +223,9 @@ bot.on('chat', (username, message) => {
                     let removed = [];
                     let notfound = [];
                     for (const allyName of allyNames) {
-                        const idx = ALLY_LIST.findIndex(ally => ally.toLowerCase() === allyName.toLowerCase());
+                        const idx = ctx.allies.findIndex(ally => ally.toLowerCase() === allyName.toLowerCase());
                         if (idx !== -1) {
-                            ALLY_LIST.splice(idx, 1);
+                            ctx.allies.splice(idx, 1);
                             removed.push(allyName);
                         } else {
                             notfound.push(allyName);
@@ -465,7 +470,7 @@ async function eat() {
 function return_to_ally(){
     state = "RETURNING TO ALLY"
     
-    const nearestAlly = utils.getNearestAlly(bot, ALLY_LIST)
+    const nearestAlly = utils.getNearestAlly(bot, ctx.allies)
     if (!nearestAlly) {
         //console.log("No ally found to return to")
         state = "IDLE"
@@ -683,7 +688,7 @@ function checkForClosestTarget() {
             entity && 
             entity.type === 'player' &&
             entity.username !== bot.username &&
-            !utils.isAlly(entity.username, ALLY_LIST) &&
+            !utils.isAlly(entity.username, ctx.allies) &&
             entity.position
         )
     
@@ -729,14 +734,11 @@ function checkForClosestTarget() {
 
 
 function isTooFarFromAlly() {
-    const nearestAlly = utils.getNearestAlly(bot, ALLY_LIST)
-    if (!nearestAlly) {
-        return false // No ally online, don't worry about distance
-    }
-    
+    const nearestAlly = utils.getNearestAlly(bot, ctx.allies)
+    if (!nearestAlly) return false
     const distance = bot.entity.position.distanceTo(nearestAlly.position)
-    return distance > ALLY_MAX_DISTANCE
-}
+    return distance > ctx.allyMaxDistance
+  }
 
 // Shared helper function for getting items in inventory
 
@@ -885,16 +887,16 @@ function removeFlagByCoords(x, y, z) {
     bot.chat(`Flag removed: (${removed.x}, ${removed.y}, ${removed.z})`);
 }
 
-let lastFlagGoalTime = 0;
 function moveToFlag() {
     if (flagQueue.length === 0) {
         bot.chat('No flags in queue.');
         return;
     }
-    const now = Date.now();
-    // please move this to use cooldown systems
-    if (now - lastFlagGoalTime < 15000) return; // 15 seconds throttle
-    lastFlagGoalTime = now;
+    
+    if (!canDoAction("flagGoal")) {
+        return; // Still on cooldown
+    }
+    
     const flag = flagQueue[0];
     state = "MOVING TO FLAG";
     bot.setControlState('sprint', true);
