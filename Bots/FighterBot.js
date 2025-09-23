@@ -54,6 +54,15 @@ bot.on('error', err => {
     }
   });
 
+
+  const ctx = { //bot context
+    allies: ['ADMINBOT'],   // replaces ALLY_LIST
+    allyMaxDistance: 30,    // replaces ALLY_MAX_DISTANCE
+    flags: [],              // replaces flagQueue
+    cooldowns: new Map(),
+    lastAction: new Map(),
+  }
+
   //VARIABLES & CONSTANTS
 var state ="IDLE"
 var target = null
@@ -80,37 +89,23 @@ const JUMP_HOLD_MS     = 50;     // short tap
 var CPS                = 13 //used to calculate attack cooldown
 const HEALTH_THRESHOLD = 10
 const HUNGER_THRESHOLD = 18
-const COOLDOWN = new Map()
-const LASTACTION = new Map()
+//const COOLDOWN = new Map()
+//const LASTACTION = new Map()
 
 // COOLDOWNS, time in miliseconds 
-COOLDOWN.set('attack',800/CPS) //time between attacks, modify via CPS const
-COOLDOWN.set('stateprint',500) // time between console output of state
-COOLDOWN.set('gearing',500) // time for gearing process
-COOLDOWN.set('healing',1000) // time between healing attempts
-COOLDOWN.set('eating',500) // time between eating attempts
-COOLDOWN.set('playerCollect',250) // time for player collect gearing
-COOLDOWN.set('movementSwing',75) // ~13 CPS for movement swinging
-COOLDOWN.set('lookAround',2000) // 2 seconds between look around actions
-COOLDOWN.set('targetCheck',2000) // 2 seconds between target checks
-COOLDOWN.set('strafeDecision',4000) // 4 seconds between strafe decisions
-COOLDOWN.set('flagGoal',15000) // 15 seconds between flag goal changes
-//COOLDOWN.set('drinkStrength', 95000); // 1 min 35 sec
-//COOLDOWN.set('drinkSpeed', 95000); // 1 min 35 sec
-//COOLDOWN.set('drinkFireRes', 480000); // 8 min
+ctx.cooldowns.set('attack',800/CPS) //time between attacks, modify via CPS const
+ctx.cooldowns.set('stateprint',500) // time between console output of state
+ctx.cooldowns.set('gearing',500) // time for gearing process
+ctx.cooldowns.set('healing',1000) // time between healing attempts
+ctx.cooldowns.set('eating',500) // time between eating attempts
+ctx.cooldowns.set('playerCollect',250) // time for player collect gearing
+ctx.cooldowns.set('movementSwing',75) // ~13 CPS for movement swinging
+ctx.cooldowns.set('lookAround',2000) // 2 seconds between look around actions
+ctx.cooldowns.set('targetCheck',2000) // 2 seconds between target checks
+ctx.cooldowns.set('strafeDecision',4000) // 4 seconds between strafe decisions
+ctx.cooldowns.set('flagGoal',15000) // 15 seconds between flag goal changes
 
-// Ally system constants
-//var ALLY_LIST = ['ADMINBOT'] // Players the bot will not attack
-//const ALLY_MAX_DISTANCE = 30 // Maximum distance from allied players
 
-// Flag queue system
-//var flagQueue = [];
-
-const ctx = {
-    allies: ['ADMINBOT'],   // replaces ALLY_LIST
-    allyMaxDistance: 30,    // replaces ALLY_MAX_DISTANCE
-    flags: [],              // replaces flagQueue
-  }
 
 //INTERRUPT TRIGGERS
 bot.on("death", () => {
@@ -257,7 +252,7 @@ bot.on('chat', (username, message) => {
                         LEFT_RIGHT_MAX_MS = newLeftRightMaxMs;
                         MISS_CHANCE_MAX = newMissChanceBase;
 
-                        COOLDOWN.set('attack',800/CPS)
+                        ctx.cooldowns.set('attack',800/CPS)
                         bot.chat(`Configuration updated: CPS=${CPS}, REACH_MIN=${REACH_MIN}, REACH_MAX=${REACH_MAX}, LEFT_RIGHT_MIN_MS=${LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${MISS_CHANCE_MAX}`);
                     } else {
                         bot.chat('Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_MAX> - All values must be numbers');
@@ -400,10 +395,10 @@ async function heal() {
             
             if(bot.health < 7){
                 await bot.activateItem(false, new Vec3(0, -1, 0))
-                COOLDOWN.set('healing',500) //double pot
+                ctx.cooldowns.set('healing',500) //double pot
             }else{
                 await bot.activateItem(false, new Vec3(0, -1, 0))
-                COOLDOWN.set('healing',1000)
+                ctx.cooldowns.set('healing',1000)
             }
 
             // Stop moving after healing
@@ -548,56 +543,56 @@ function handleStrafing () {
    
 
     const stopAllStrafe = () => {
-      bot.setControlState('left',  false)
-      bot.setControlState('right', false)
-      bot.setControlState('back',  false)
-      strafeDirection = null
+        bot.setControlState('left',  false)
+        bot.setControlState('right', false)
+        bot.setControlState('back',  false)
+        strafeDirection = null
     }
   
     const startStrafe = (dir, durationMs) => {
-      // clean start
-      stopAllStrafe()
-      bot.setControlState(dir, true)
-      strafeDirection = dir
-      // prime a cooldown
-      COOLDOWN.set('strafeHold', durationMs)
-      LASTACTION.set('strafeHold', Date.now())
+        // clean start
+        stopAllStrafe()
+        bot.setControlState(dir, true)
+        strafeDirection = dir
+        // prime a cooldown
+        ctx.cooldowns.set('strafeHold', durationMs)
+        ctx.lastAction.set('strafeHold', Date.now())
     }
 
     // ------- End current strafe when its hold cooldown elapses -------
     if (strafeDirection && canDoAction('strafeHold')) {
-      stopAllStrafe()
-      //console.log('Strafe movement ended')
+        stopAllStrafe()
+        //console.log('Strafe movement ended')
     }
   
     // new strafe decision
     if (canDoAction('strafeDecision')) {
-      const choice = ['left', 'right', 'back', 'none'][Math.floor(Math.random() * 4)]
+        const choice = ['left', 'right', 'back', 'none'][Math.floor(Math.random() * 4)]
   
-      switch (choice) {
-        case 'left': {
-          const dur = LEFT_RIGHT_MIN_MS + Math.random() * (LEFT_RIGHT_MAX_MS - LEFT_RIGHT_MIN_MS)
-          startStrafe('left', dur)
-          //console.log(`Started strafing left for ${(dur / 1000).toFixed(1)}s`)
-          break
+        switch (choice) {
+            case 'left': {
+                const dur = LEFT_RIGHT_MIN_MS + Math.random() * (LEFT_RIGHT_MAX_MS - LEFT_RIGHT_MIN_MS)
+                startStrafe('left', dur)
+                //console.log(`Started strafing left for ${(dur / 1000).toFixed(1)}s`)
+                break
+            }
+            case 'right': {
+                const dur = LEFT_RIGHT_MIN_MS + Math.random() * (LEFT_RIGHT_MAX_MS - LEFT_RIGHT_MIN_MS)
+                startStrafe('right', dur)
+                //console.log(`Started strafing right for ${(dur / 1000).toFixed(1)}s`)
+                break
+            }
+            case 'back': {
+                startStrafe('back', BACK_MS)
+                //console.log('Started backing up for 0.5s')
+                break
+            }
+            default: {
+                stopAllStrafe()
+                //console.log('No strafe movement this cycle')
+                break
+            }
         }
-        case 'right': {
-          const dur = LEFT_RIGHT_MIN_MS + Math.random() * (LEFT_RIGHT_MAX_MS - LEFT_RIGHT_MIN_MS)
-          startStrafe('right', dur)
-          //console.log(`Started strafing right for ${(dur / 1000).toFixed(1)}s`)
-          break
-        }
-        case 'back': {
-          startStrafe('back', BACK_MS)
-          //console.log('Started backing up for 0.5s')
-          break
-        }
-        default: {
-          stopAllStrafe()
-          //console.log('No strafe movement this cycle')
-          break
-        }
-      }
     }
     //
     if (!strafeDirection) return
@@ -784,16 +779,16 @@ function canEatFood() {
 }
 
 // Find the best food item to eat (prioritizes higher nutrition)
-function canDoAction(action){
-    const now = Date.now();
-    const last = LASTACTION.get(action) || 0;
-    if (COOLDOWN.get(action) < (now - last)){
-        LASTACTION.set(action, now);
-        return true;
+function canDoAction(action) {
+    const now = Date.now()
+    const last = ctx.lastAction.get(action) || 0
+    if ((now - last) > (ctx.cooldowns.get(action) || 0)) {
+      ctx.lastAction.set(action, now)
+      return true
     }
-    return false;
-}
-
+    return false
+  }
+  
 function bot_reset(){
     bot.setControlState('sprint', false)
     bot.setControlState('forward', false)
@@ -869,26 +864,26 @@ async function DrinkBuffPotions(){
 }
 
 function addFlag(vec) {
-    flagQueue.push(vec);
+    ctx.flags.push(vec);
     bot.chat(`Flag added: (${vec.x}, ${vec.y}, ${vec.z})`);
 }
 
 function removeFlagByCoords(x, y, z) {
-    if (flagQueue.length === 0) {
+    if (ctx.flags.length === 0) {
         bot.chat('No flags to remove.');
         return;
     }
-    const idx = flagQueue.findIndex(f => f.x === x && f.y === y && f.z === z);
+    const idx = ctx.flags.findIndex(f => f.x === x && f.y === y && f.z === z);
     if (idx === -1) {
         bot.chat('No matching flag found.');
         return;
     }
-    const removed = flagQueue.splice(idx, 1)[0];
+    const removed = ctx.flags.splice(idx, 1)[0];
     bot.chat(`Flag removed: (${removed.x}, ${removed.y}, ${removed.z})`);
 }
 
 function moveToFlag() {
-    if (flagQueue.length === 0) {
+    if (ctx.flags.length === 0) {
         bot.chat('No flags in queue.');
         return;
     }
@@ -897,7 +892,7 @@ function moveToFlag() {
         return; // Still on cooldown
     }
     
-    const flag = flagQueue[0];
+    const flag = ctx.flags[0];
     state = "MOVING TO FLAG";
     bot.setControlState('sprint', true);
     bot.pathfinder.setGoal(new goals.GoalBlock(flag.x, flag.y, flag.z, 1));
