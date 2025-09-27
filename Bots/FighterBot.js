@@ -26,50 +26,29 @@ const bot = mineflayer.createBot({
 bot.loadPlugin(pathfinder)
 bot.loadPlugin(armorManager)
 
-// Initial gearing on spawn
-bot.once('spawn', () => {
-    console.log('Bot spawned and starting initial gearing.')
-    console.log('my ack code is: ' + ACK)
-    //setTimeout(() => {
-    bot.chat(`/minecraft:msg ADMINBOT `+ACK)
-        //bot.whisper("ADMINBOT", ACK)
-    //}, 1000)
-    state = "gearing"
-})
-
-bot.on('error', err => {
-    console.error(`${bot.username} error:`, err.message);
-    
-    // Handle protocol errors gracefully
-    if (err.message.includes('PartialReadError') || err.message.includes('Read error')) {
-      console.log(`${bot.username}: Protocol read error detected, this is usually harmless`);
-      return;
-    }
-    
-    // For other errors, you might want to reconnect
-    if (err.message.includes('ECONNRESET') || err.message.includes('Connection lost')) {
-      console.log(`${bot.username}: Connection lost, could not connect.`);
-      process.exit(101);
-    //  // You could implement reconnection logic here
-    }
-  });
-
-
   const ctx = { //bot context
     allies: ['ADMINBOT'],   // replaces ALLY_LIST
     allyMaxDistance: 30,    // replaces ALLY_MAX_DISTANCE
     flags: [],              // replaces flagQueue
     cooldowns: new Map(),
     lastAction: new Map(),
+
+    //need to refactor to use these instead
+    state: 'IDLE',
+    target: null,
+    consecutiveMisses: 0,
+    strafeDirection: null,
+    followMinRange: undefined
+
   }
 
   //VARIABLES & CONSTANTS
-var state ="IDLE"
-var target = null
-var consecutiveMisses = 0 // Track consecutive misses for progressive miss chance
-var strafeDirection = null // Current strafe direction (null, 'left', 'right', 'back')
+//var state ="IDLE"
+//var target = null
+//var consecutiveMisses = 0 // Track consecutive misses for progressive miss chance
+//var strafeDirection = null // Current strafe direction (null, 'left', 'right', 'back')
 const TARGETING_RANGE = 25 // Close range targeting
-var follow_min_range
+//var follow_min_range
 
 //HITTING CONSTANTS
 var REACH_MIN                  = 2.85 // Minimum attack reach
@@ -105,7 +84,33 @@ ctx.cooldowns.set('targetCheck',2000) // 2 seconds between target checks
 ctx.cooldowns.set('strafeDecision',4000) // 4 seconds between strafe decisions
 ctx.cooldowns.set('flagGoal',15000) // 15 seconds between flag goal changes
 
+// Initial gearing on spawn
+bot.once('spawn', () => {
+    console.log('Bot spawned and starting initial gearing.')
+    console.log('my ack code is: ' + ACK)
+    //setTimeout(() => {
+    bot.chat(`/minecraft:msg ADMINBOT `+ACK)
+        //bot.whisper("ADMINBOT", ACK)
+    //}, 1000)
+    ctx.state = "gearing"
+})
 
+bot.on('error', err => {
+    console.error(`${bot.username} error:`, err.message);
+    
+    // Handle protocol errors gracefully
+    if (err.message.includes('PartialReadError') || err.message.includes('Read error')) {
+      console.log(`${bot.username}: Protocol read error detected, this is usually harmless`);
+      return;
+    }
+    
+    // For other errors, you might want to reconnect
+    if (err.message.includes('ECONNRESET') || err.message.includes('Connection lost')) {
+      console.log(`${bot.username}: Connection lost, could not connect.`);
+      process.exit(101);
+    //  // You could implement reconnection logic here
+    }
+  });
 
 //INTERRUPT TRIGGERS
 bot.on("death", () => {
@@ -113,7 +118,7 @@ bot.on("death", () => {
 });
 
 bot.on('entityGone', (entity) => {
-    if (target && entity.id === target.id) {
+    if (ctx.target && entity.id === ctx.target.id) {
         console.log("Target entity is gone (died or left)");
         bot_reset();
     }
@@ -121,7 +126,7 @@ bot.on('entityGone', (entity) => {
 
 bot.on('playerCollect', (collector, itemDrop) => {
     if (collector !== bot.entity) return
-    state = "gearing"
+    ctx.state = "gearing"
     if (canDoAction("playerCollect")) {
         bot.armorManager.equipAll().catch(() => {})
     }
@@ -140,7 +145,7 @@ bot.on('chat', (username, message) => {
     
     switch (command) {
     case 'gearup':
-        state = "gearing";
+        ctx.state = "gearing";
         bot.chat("Recalling gearing up state and equipping armor.");
         gear();
         break;
@@ -163,7 +168,7 @@ bot.on('chat', (username, message) => {
                         const z = parseFloat(args[2]);
                         if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
                             addFlag(new Vec3(x, y, z));
-                            if (flagQueue.length === 1) moveToFlag(); // If first flag, start moving
+                            if (ctx.flags.length === 1) moveToFlag(); // If first flag, start moving
                         } else {
                             bot.chat('Usage: addflag <x> <y> <z>');
                         }
@@ -180,7 +185,7 @@ bot.on('chat', (username, message) => {
                         if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
                             removeFlagByCoords(x, y, z);
                             // After removal, move to next flag if available
-                            if (flagQueue.length > 0) moveToFlag();
+                            if (ctx.flags.length > 0) moveToFlag();
                         } else {
                             bot.chat('Usage: removeflag <x> <y> <z>');
                         }
@@ -285,13 +290,13 @@ bot.on('physicsTick', async () => {
         }
         
         // 0. reevaluate target
-        if (state !== "EATING" && state !== "gearing" && canDoAction("targetCheck")) {
+        if (ctx.state !== "EATING" && ctx.state !== "gearing" && canDoAction("targetCheck")) {
             checkForClosestTarget()
         }
         else {
             //console.log(bot.entity.effects)
             // 1. Equip armor
-            if(state === "gearing"){
+            if(ctx.state === "gearing"){
                 gear()
             }
             
@@ -306,7 +311,7 @@ bot.on('physicsTick', async () => {
                 heal()
             }
             // 4. Eat food 
-            else if(bot.food <= HUNGER_THRESHOLD && canEatFood() || state == "EATING"){
+            else if(bot.food <= HUNGER_THRESHOLD && canEatFood() || ctx.state == "EATING"){
                 eat()
             }
             // 5. Return to ally
@@ -314,17 +319,17 @@ bot.on('physicsTick', async () => {
                 return_to_ally()
             }
             // 6. Attack target 
-            else if(target && target.position && bot.entity.position.distanceTo(target.position) <= REACH_MAX && hasLineOfSight(target)){
+            else if(ctx.target && ctx.target.position && bot.entity.position.distanceTo(ctx.target.position) <= REACH_MAX && hasLineOfSight(ctx.target)){
                 attack_target()
             }
             // 7. Move to target 
-            else if(target && target.position){
+            else if(ctx.target && ctx.target.position){
                 move_to_target()
             }
         }
         //logging
         if (canDoAction("stateprint")){
-            console.log(state)
+            console.log(ctx.state)
         }
     } catch (error) {
         console.log('Physics tick error:', error.message)
@@ -339,7 +344,7 @@ bot.on('physicsTick', async () => {
 
 // 1. EQUIP ARMOR
 function gear(){
-    state = "GEARING UP"
+    ctx.state = "GEARING UP"
     
     // Equip armor
     bot.armorManager.equipAll().catch(() => {})
@@ -349,15 +354,15 @@ function gear(){
     
     // Reset state after gearing cooldown and ensure sword is equipped
     if (canDoAction("gearing")) {
-        state = "IDLE"
+        ctx.state = "IDLE"
         utils.getStrongestSword(bot)
     }
 }
 
 // 2. HEAL
 async function heal() {
-    if (state !="HEALING" && canDoAction("healing")){
-        state = "HEALING"
+    if (ctx.state !="HEALING" && canDoAction("healing")){
+        ctx.state = "HEALING"
 
         // Find a splash instant health potion with potionId 25 in inventory
         const splashPotions = bot.inventory.items().filter(item => item.name === 'splash_potion');
@@ -371,7 +376,7 @@ async function heal() {
         }
         if (!foundPotion) {
             //console.log('No healing splash potion with potionId 25 found');
-            state = "IDLE";
+            ctx.state = "IDLE";
             return;
         }
         await bot.equip(foundPotion, 'hand');
@@ -382,9 +387,9 @@ async function heal() {
             //await bot.waitForTicks(ticks);
           
             // Turn away from target if there is one and run away while healing
-            if (target) {
+            if (ctx.target) {
                 // Calculate direction away from target
-                await utils.lookAwayFromTarget(bot, target)
+                await utils.lookAwayFromTarget(bot, ctx.target)
                 
                 // Start sprinting away from target
                 bot.setControlState('sprint', true)
@@ -406,7 +411,7 @@ async function heal() {
             bot.setControlState('forward', false)
 
             // Immediately resume normal state after healing and re-equip sword
-            state = "IDLE"
+            ctx.state = "IDLE"
             utils.getStrongestSword(bot)
             //console.log('Healing complete, resuming combat')
         } catch (error) {
@@ -414,7 +419,7 @@ async function heal() {
             // Stop movement on error
             bot.setControlState('sprint', false)
             bot.setControlState('forward', false)
-            state = "IDLE"
+            ctx.state = "IDLE"
             utils.getStrongestSword(bot)
         }
     }
@@ -424,20 +429,20 @@ async function heal() {
 async function eat() {
     //console.log(bot.food)
     // Start eating if not already eating and cooldown allows
-    if (state !== "EATING" && canDoAction("eating")) {
-        state = "EATING"
+    if (ctx.state !== "EATING" && canDoAction("eating")) {
+        ctx.state = "EATING"
         const food = await utils.getBestFood(bot)
         
         if (!food) {
             //console.log('No valid food found in inventory')
-            state = "IDLE"
+            ctx.state = "IDLE"
             return
         }
         
         //console.log('Started eating food - will jump and face away from target')
-        if (target && target.position) { // Face away from target and move forward
+        if (ctx.target && ctx.target.position) { // Face away from target and move forward
             try {
-                await utils.lookAwayFromTarget(bot, target)
+                await utils.lookAwayFromTarget(bot, ctx.target)
                 bot.setControlState('forward', true);
                 bot.setControlState('jump', true);
                 bot.setControlState('jump', false);
@@ -450,7 +455,7 @@ async function eat() {
     }
     if (bot.food > HUNGER_THRESHOLD) {
         //console.log('No longer hungry, stopping eating')
-        state = "IDLE"
+        ctx.state = "IDLE"
         utils.getStrongestSword(bot)
         return
     }
@@ -463,12 +468,12 @@ async function eat() {
 
 // 4. RETURN TO ALLY
 function return_to_ally(){
-    state = "RETURNING TO ALLY"
+    ctx.state = "RETURNING TO ALLY"
     
     const nearestAlly = utils.getNearestAlly(bot, ctx.allies)
     if (!nearestAlly) {
         //console.log("No ally found to return to")
-        state = "IDLE"
+        ctx.state = "IDLE"
         return
     }
     
@@ -476,7 +481,7 @@ function return_to_ally(){
     //console.log(`Returning to ally ${nearestAlly.username} (${Math.floor(distance)} blocks away)`)
     
     // Reset current target since we're prioritizing ally proximity
-    target = null
+    ctx.target = null
     
     // Sprint to ally
     bot.setControlState('sprint', true)
@@ -486,25 +491,25 @@ function return_to_ally(){
 // 5. ATTACK TARGET
 function attack_target(){
     // Check if target still exists
-    if (!target || !target.position) {
+    if (!ctx.target || !ctx.target.position) {
         //console.log("Target lost during attack")
         bot_reset()
         return
     }
     
-    state = "ATTACKING TARGET"
+    ctx.state = "ATTACKING TARGET"
     // Look at the target's eye level (1.62 above position.y for players)
-    const eyePos = target.position.offset(0, 1.62, 0);
+    const eyePos = ctx.target.position.offset(0, 1.62, 0);
     bot.lookAt(eyePos);
     
-    const distance = bot.entity.position.distanceTo(target.position)
+    const distance = bot.entity.position.distanceTo(ctx.target.position)
     
     // Handle strafing substate
     handleStrafing()
     
     // Calculate progressive miss chance based on consecutive misses
     const baseMissChance = MISS_CHANCE_BASE + Math.random() * (MISS_CHANCE_MAX - MISS_CHANCE_BASE)
-    const streakIncrease = consecutiveMisses * (MISS_STREAK_INCREASE_MIN + Math.random() * (MISS_STREAK_INCREASE_MAX - MISS_STREAK_INCREASE_MIN))
+    const streakIncrease = ctx.consecutiveMisses * (MISS_STREAK_INCREASE_MIN + Math.random() * (MISS_STREAK_INCREASE_MAX - MISS_STREAK_INCREASE_MIN))
     const currentMissChance = Math.min(baseMissChance + streakIncrease, 0.85) // Cap at 85% miss chance
     
     // Generate random reach for this attack (between 2.85 - 3.90)
@@ -517,19 +522,19 @@ function attack_target(){
             if (missRoll < currentMissChance) {
                 // Miss - swing but don't attack
                 bot.swingArm()
-                consecutiveMisses++
-                //console.log(`Attack missed! (${(missRoll * 100).toFixed(1)}% roll, ${(currentMissChance * 100).toFixed(1)}% threshold) - Miss streak: ${consecutiveMisses}`)
+                ctx.consecutiveMisses++
+                //console.log(`Attack missed! (${(missRoll * 100).toFixed(1)}% roll, ${(currentMissChance * 100).toFixed(1)}% threshold) - Miss streak: ${ctx.consecutiveMisses}`)
                 
                 // Reset miss streak after 5 consecutive attempts
-                if (consecutiveMisses >= MISS_STREAK_RESET) {
+                if (ctx.consecutiveMisses >= MISS_STREAK_RESET) {
                     //console.log(`Miss streak reset after ${MISS_STREAK_RESET} consecutive attempts`)
-                    consecutiveMisses = 0
+                    ctx.consecutiveMisses = 0
                 }
             } else {
                 // Hit - do real damage and reset miss streak
-                bot.attack(target)
+                bot.attack(ctx.target)
                 //console.log(`Attack hit! Reach: ${currentReach.toFixed(2)}, Miss chance was: ${(currentMissChance * 100).toFixed(1)}% - Miss streak reset`)
-                consecutiveMisses = 0 // Reset miss streak on successful hit
+                ctx.consecutiveMisses = 0 // Reset miss streak on successful hit
             }
         } /*else if (distance <= 8) {
             // Within 8 blocks but outside attack range - fake swing
@@ -546,21 +551,21 @@ function handleStrafing () {
         bot.setControlState('left',  false)
         bot.setControlState('right', false)
         bot.setControlState('back',  false)
-        strafeDirection = null
+        ctx.strafeDirection = null
     }
   
     const startStrafe = (dir, durationMs) => {
         // clean start
         stopAllStrafe()
         bot.setControlState(dir, true)
-        strafeDirection = dir
+        ctx.strafeDirection = dir
         // prime a cooldown
         ctx.cooldowns.set('strafeHold', durationMs)
         ctx.lastAction.set('strafeHold', Date.now())
     }
 
     // ------- End current strafe when its hold cooldown elapses -------
-    if (strafeDirection && canDoAction('strafeHold')) {
+    if (ctx.strafeDirection && canDoAction('strafeHold')) {
         stopAllStrafe()
         //console.log('Strafe movement ended')
     }
@@ -595,7 +600,7 @@ function handleStrafing () {
         }
     }
     //
-    if (!strafeDirection) return
+    if (!ctx.strafeDirection) return
     if (Math.random() >= JUMP_CHANCE) return
     bot.setControlState('jump', true)
     setTimeout(() => bot.setControlState('jump', false), JUMP_HOLD_MS)
@@ -605,27 +610,27 @@ function handleStrafing () {
 // 6. MOVE TO TARGET
 async function move_to_target(){
     // Check if target still exists and has position
-    if (!target || !target.position) {
+    if (!ctx.target || !ctx.target.position) {
         //console.log("Target lost during movement")
         bot_reset()
         return
     }
     
-    state = "MOVING TO TARGET"
+    ctx.state = "MOVING TO TARGET"
     
     // Calculate the minimum attack range (just outside of REACH_MIN)
     //const minAttackRange = REACH_MIN + 0.1 // Small buffer to avoid getting inside the target
     
     // Start moving to target, but stop at min attack range
     bot.setControlState('sprint', true)
-    bot.pathfinder.setGoal(new goals.GoalFollow(target, follow_min_range))
+    bot.pathfinder.setGoal(new goals.GoalFollow(ctx.target, ctx.follow_min_range))
     
     // Constantly swing sword if target is within 10 blocks
-    if (target && target.position) {
-        const distance = bot.entity.position.distanceTo(target.position)
+    if (ctx.target && ctx.target.position) {
+        const distance = bot.entity.position.distanceTo(ctx.target.position)
         if (distance <= 10 && canDoAction("movementSwing")) {
             // Look at target and swing (no damage)
-            const eyePos = target.position.offset(0, 1.62, 0);
+            const eyePos = ctx.target.position.offset(0, 1.62, 0);
             bot.lookAt(eyePos);
             bot.swingArm()
             //console.log("Movement swinging - target within 10 blocks")
@@ -667,12 +672,12 @@ function hasLineOfSight(targetEntity, stepSize = 0.1) {
         const block = bot.blockAt(currentPos);
         
         if (block && block.boundingBox === 'block') {
-            follow_min_range = 1 // lower follow range to get closer to the target than normal 
+            ctx.follow_min_range = 1 // lower follow range to get closer to the target than normal 
             return false;
         }
     }
     // No solid blocks found in the path
-    follow_min_range = REACH_MIN + 0.1
+    ctx.follow_min_range = REACH_MIN + 0.1
     return true;
 }
 
@@ -688,7 +693,7 @@ function checkForClosestTarget() {
         )
     
     if (players.length === 0){
-        if (target) {
+        if (ctx.target) {
             //console.log("No enemies detected - Resetting")
             bot_reset()
         }
@@ -709,7 +714,7 @@ function checkForClosestTarget() {
     
     // Only engage targets within range
     if (closestDistance > TARGETING_RANGE) {
-        if (target) {
+        if (ctx.target) {
             //console.log(`Closest enemy ${closestEnemy.username} too far (${Math.floor(closestDistance)} blocks) - Resetting`)
             bot_reset()
         }
@@ -717,10 +722,10 @@ function checkForClosestTarget() {
     }
     
     // Check if we need to switch targets
-    if (!target || target.id !== closestEnemy.id) {
-        const previousTarget = target ? target.username : "none"
-        target = closestEnemy
-        //console.log(`Target switch: ${previousTarget} → ${target.username} at ${Math.floor(closestDistance)} blocks (closest enemy)`)
+    if (!ctx.target || ctx.target.id !== closestEnemy.id) {
+        const previousTarget = ctx.target ? ctx.target.username : "none"
+        ctx.target = closestEnemy
+        //console.log(`Target switch: ${previousTarget} → ${ctx.target.username} at ${Math.floor(closestDistance)} blocks (closest enemy)`)
         //attemptDrinkBuffPotions(); MARKED FOR REMOVAL - LET STATE MACHINE HANDLE IT 
     }
 }
@@ -796,38 +801,37 @@ function bot_reset(){
     bot.setControlState('right', false)
     bot.setControlState('back', false)
     bot.setControlState('jump', false)
-    target = null
-    consecutiveMisses = 0 // Reset miss streak on bot reset
-    strafeDirection = null // Reset strafe state
-    strafeEndTime = 0
+    ctx.target = null
+    ctx.consecutiveMisses = 0 // Reset miss streak on bot reset
+    ctx.strafeDirection = null // Reset strafe state
     bot.pathfinder.setGoal(null)
     //console.log("RESETTING")
-    state = "IDLE"
+    ctx.state = "IDLE"
     //attemptDrinkBuffPotions(); MARKED FOR REMOVAL - LET STATE MACHINE HANDLE IT 
 }
 // Attempt to drink buff potions (IDs: 36, 15, 12) with cooldowns
 
 async function DrinkBuffPotions(){
-    if(state == "DRINKINGFRES"){
+    if(ctx.state == "DRINKINGFRES"){
         if(bot.entity.effects[11]){
             bot.chat("drank fres")
-            state = "IDLE"
+            ctx.state = "IDLE"
         }
         bot.activateItem()
         return
     }
-    if(state == "DRINKINGSPEED"){
+    if(ctx.state == "DRINKINGSPEED"){
         if(bot.entity.effects[0]){
             bot.chat("drank speed")
-            state = "IDLE"
+            ctx.state = "IDLE"
         }
         bot.activateItem()
         return
     }
-    if(state == "DRINKINGSTRENGTH"){
+    if(ctx.state == "DRINKINGSTRENGTH"){
         if(bot.entity.effects[4]){
             bot.chat("drank strength")
-            state = "IDLE"
+            ctx.state = "IDLE"
         }
         bot.activateItem()
         return
@@ -845,13 +849,13 @@ async function DrinkBuffPotions(){
                 await bot.equip(potions[0], 'hand');
                 switch (effect_id) {
                     case 11:
-                        state = "DRINKINGFRES";
+                        ctx.state = "DRINKINGFRES";
                         break;
                     case 0:
-                        state = "DRINKINGSPEED";
+                        ctx.state = "DRINKINGSPEED";
                         break;
                     case 4:
-                        state = "DRINKINGSTRENGTH";
+                        ctx.state = "DRINKINGSTRENGTH";
                         break;
                 }
             }else{
@@ -893,7 +897,7 @@ function moveToFlag() {
     }
     
     const flag = ctx.flags[0];
-    state = "MOVING TO FLAG";
+    ctx.state = "MOVING TO FLAG";
     bot.setControlState('sprint', true);
     bot.pathfinder.setGoal(new goals.GoalBlock(flag.x, flag.y, flag.z, 1));
     bot.chat(`Moving to flag: (${flag.x}, ${flag.y}, ${flag.z})`);
