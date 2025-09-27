@@ -4,6 +4,7 @@ const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const armorManager = require('mineflayer-armor-manager')
 const Vec3 = require('vec3')
 const utils = require('./shared/utils')
+const combat = require('./shared/combat')
 
 function getArg(flag, fallback = undefined) {
 const i = process.argv.indexOf(flag);
@@ -47,24 +48,41 @@ bot.loadPlugin(armorManager)
 //var target = null
 //var consecutiveMisses = 0 // Track consecutive misses for progressive miss chance
 //var strafeDirection = null // Current strafe direction (null, 'left', 'right', 'back')
-const TARGETING_RANGE = 25 // Close range targeting
 //var follow_min_range
 
+const C = {
+    REACH_MIN: 2.85,
+    REACH_MAX: 3.68,
+    MISS_CHANCE_BASE: 0.02,
+    MISS_CHANCE_MAX: 0.12,
+    MISS_STREAK_INCREASE_MIN: 0.05,
+    MISS_STREAK_INCREASE_MAX: 0.12,
+    MISS_STREAK_RESET: 5,
+    LEFT_RIGHT_MIN_MS: 1000,
+    LEFT_RIGHT_MAX_MS: 3000,
+    BACK_MS: 500,
+    JUMP_CHANCE: 0.02,
+    JUMP_HOLD_MS: 50,
+    TARGETING_RANGE: 25
+  }
+  
+
+
 //HITTING CONSTANTS
-var REACH_MIN                  = 2.85 // Minimum attack reach
-var REACH_MAX                  = 3.68 // Maximum attack reach
-var MISS_CHANCE_BASE           = 0.02 // 2% base miss chance
-const MISS_CHANCE_MAX          = 0.12 // 20% maximum miss chance
-const MISS_STREAK_INCREASE_MIN = 0.05 // 5% minimum increase per consecutive miss
-const MISS_STREAK_INCREASE_MAX = 0.12 // 12% maximum increase per consecutive miss
-const MISS_STREAK_RESET        = 5 // Reset miss streak after 5 attempts
+//var REACH_MIN                  = 2.85 // Minimum attack reach
+//var REACH_MAX                  = 3.68 // Maximum attack reach
+//var MISS_CHANCE_BASE           = 0.02 // 2% base miss chance
+//const MISS_CHANCE_MAX          = 0.12 // 20% maximum miss chance
+//const MISS_STREAK_INCREASE_MIN = 0.05 // 5% minimum increase per consecutive miss
+//const MISS_STREAK_INCREASE_MAX = 0.12 // 12% maximum increase per consecutive miss
+//const MISS_STREAK_RESET        = 5 // Reset miss streak after 5 attempts
 
 //STRAFING CONSTANTS
-var LEFT_RIGHT_MIN_MS  = 1000;   // 1s
-var LEFT_RIGHT_MAX_MS  = 3000;   // 3s
-const BACK_MS          = 500;    // 0.5s
-const JUMP_CHANCE      = 0.02;   // 2%
-const JUMP_HOLD_MS     = 50;     // short tap
+//var LEFT_RIGHT_MIN_MS  = 1000;   // 1s
+//var LEFT_RIGHT_MAX_MS  = 3000;   // 3s
+//const BACK_MS          = 500;    // 0.5s
+//const JUMP_CHANCE      = 0.02;   // 2%
+//const JUMP_HOLD_MS     = 50;     // short tap
 var CPS                = 13 //used to calculate attack cooldown
 const HEALTH_THRESHOLD = 10
 const HUNGER_THRESHOLD = 18
@@ -251,14 +269,14 @@ bot.on('chat', (username, message) => {
                         !isNaN(newLeftRightMinMs) && !isNaN(newLeftRightMaxMs) && !isNaN(newMissChanceBase)) {
                         
                         CPS = newCPS;
-                        REACH_MIN = newReachMin;
-                        REACH_MAX = newReachMax;
-                        LEFT_RIGHT_MIN_MS = newLeftRightMinMs;
-                        LEFT_RIGHT_MAX_MS = newLeftRightMaxMs;
-                        MISS_CHANCE_MAX = newMissChanceBase;
+                        C.REACH_MIN = newReachMin;
+                        C.REACH_MAX = newReachMax;
+                        C.LEFT_RIGHT_MIN_MS = newLeftRightMinMs;
+                        C.LEFT_RIGHT_MAX_MS = newLeftRightMaxMs;
+                        C.MISS_CHANCE_MAX = newMissChanceBase;
 
                         ctx.cooldowns.set('attack',800/CPS)
-                        bot.chat(`Configuration updated: CPS=${CPS}, REACH_MIN=${REACH_MIN}, REACH_MAX=${REACH_MAX}, LEFT_RIGHT_MIN_MS=${LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${MISS_CHANCE_MAX}`);
+                        bot.chat(`Configuration updated: CPS=${CPS}, REACH_MIN=${C.REACH_MIN}, REACH_MAX=${C.REACH_MAX}, LEFT_RIGHT_MIN_MS=${C.LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${C.LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${C.MISS_CHANCE_MAX}`);
                     } else {
                         bot.chat('Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_MAX> - All values must be numbers');
                     }
@@ -291,7 +309,7 @@ bot.on('physicsTick', async () => {
         
         // 0. reevaluate target
         if (ctx.state !== "EATING" && ctx.state !== "gearing" && canDoAction("targetCheck")) {
-            checkForClosestTarget()
+            combat.checkForClosestTarget(bot, ctx, C)
         }
         else {
             //console.log(bot.entity.effects)
@@ -319,8 +337,8 @@ bot.on('physicsTick', async () => {
                 return_to_ally()
             }
             // 6. Attack target 
-            else if(ctx.target && ctx.target.position && bot.entity.position.distanceTo(ctx.target.position) <= REACH_MAX && hasLineOfSight(ctx.target)){
-                attack_target()
+            else if(ctx.target && ctx.target.position && bot.entity.position.distanceTo(ctx.target.position) <= C.REACH_MAX && combat.hasLineOfSight(bot, ctx, ctx.target, C)){
+                combat.attackTarget(bot, ctx, C)
             }
             // 7. Move to target 
             else if(ctx.target && ctx.target.position){
@@ -488,123 +506,7 @@ function return_to_ally(){
     bot.pathfinder.setGoal(new goals.GoalFollow(nearestAlly, 3)) // Follow within 3 blocks
 }
 
-// 5. ATTACK TARGET
-function attack_target(){
-    // Check if target still exists
-    if (!ctx.target || !ctx.target.position) {
-        //console.log("Target lost during attack")
-        bot_reset()
-        return
-    }
-    
-    ctx.state = "ATTACKING TARGET"
-    // Look at the target's eye level (1.62 above position.y for players)
-    const eyePos = ctx.target.position.offset(0, 1.62, 0);
-    bot.lookAt(eyePos);
-    
-    const distance = bot.entity.position.distanceTo(ctx.target.position)
-    
-    // Handle strafing substate
-    handleStrafing()
-    
-    // Calculate progressive miss chance based on consecutive misses
-    const baseMissChance = MISS_CHANCE_BASE + Math.random() * (MISS_CHANCE_MAX - MISS_CHANCE_BASE)
-    const streakIncrease = ctx.consecutiveMisses * (MISS_STREAK_INCREASE_MIN + Math.random() * (MISS_STREAK_INCREASE_MAX - MISS_STREAK_INCREASE_MIN))
-    const currentMissChance = Math.min(baseMissChance + streakIncrease, 0.85) // Cap at 85% miss chance
-    
-    // Generate random reach for this attack (between 2.85 - 3.90)
-    const currentReach = REACH_MIN + Math.random() * (REACH_MAX - REACH_MIN)
-    
-    if(canDoAction("attack")){
-        if (distance <= currentReach) {
-            // Within attack range - check for miss
-            const missRoll = Math.random()
-            if (missRoll < currentMissChance) {
-                // Miss - swing but don't attack
-                bot.swingArm()
-                ctx.consecutiveMisses++
-                //console.log(`Attack missed! (${(missRoll * 100).toFixed(1)}% roll, ${(currentMissChance * 100).toFixed(1)}% threshold) - Miss streak: ${ctx.consecutiveMisses}`)
-                
-                // Reset miss streak after 5 consecutive attempts
-                if (ctx.consecutiveMisses >= MISS_STREAK_RESET) {
-                    //console.log(`Miss streak reset after ${MISS_STREAK_RESET} consecutive attempts`)
-                    ctx.consecutiveMisses = 0
-                }
-            } else {
-                // Hit - do real damage and reset miss streak
-                bot.attack(ctx.target)
-                //console.log(`Attack hit! Reach: ${currentReach.toFixed(2)}, Miss chance was: ${(currentMissChance * 100).toFixed(1)}% - Miss streak reset`)
-                ctx.consecutiveMisses = 0 // Reset miss streak on successful hit
-            }
-        } /*else if (distance <= 8) {
-            // Within 8 blocks but outside attack range - fake swing
-            fakeSwingAtTarget()
-        }*/
-    }
-}
 
-// Handle strafing substate during combat
-function handleStrafing () {
-   
-
-    const stopAllStrafe = () => {
-        bot.setControlState('left',  false)
-        bot.setControlState('right', false)
-        bot.setControlState('back',  false)
-        ctx.strafeDirection = null
-    }
-  
-    const startStrafe = (dir, durationMs) => {
-        // clean start
-        stopAllStrafe()
-        bot.setControlState(dir, true)
-        ctx.strafeDirection = dir
-        // prime a cooldown
-        ctx.cooldowns.set('strafeHold', durationMs)
-        ctx.lastAction.set('strafeHold', Date.now())
-    }
-
-    // ------- End current strafe when its hold cooldown elapses -------
-    if (ctx.strafeDirection && canDoAction('strafeHold')) {
-        stopAllStrafe()
-        //console.log('Strafe movement ended')
-    }
-  
-    // new strafe decision
-    if (canDoAction('strafeDecision')) {
-        const choice = ['left', 'right', 'back', 'none'][Math.floor(Math.random() * 4)]
-  
-        switch (choice) {
-            case 'left': {
-                const dur = LEFT_RIGHT_MIN_MS + Math.random() * (LEFT_RIGHT_MAX_MS - LEFT_RIGHT_MIN_MS)
-                startStrafe('left', dur)
-                //console.log(`Started strafing left for ${(dur / 1000).toFixed(1)}s`)
-                break
-            }
-            case 'right': {
-                const dur = LEFT_RIGHT_MIN_MS + Math.random() * (LEFT_RIGHT_MAX_MS - LEFT_RIGHT_MIN_MS)
-                startStrafe('right', dur)
-                //console.log(`Started strafing right for ${(dur / 1000).toFixed(1)}s`)
-                break
-            }
-            case 'back': {
-                startStrafe('back', BACK_MS)
-                //console.log('Started backing up for 0.5s')
-                break
-            }
-            default: {
-                stopAllStrafe()
-                //console.log('No strafe movement this cycle')
-                break
-            }
-        }
-    }
-    //
-    if (!ctx.strafeDirection) return
-    if (Math.random() >= JUMP_CHANCE) return
-    bot.setControlState('jump', true)
-    setTimeout(() => bot.setControlState('jump', false), JUMP_HOLD_MS)
-  }
   
 
 // 6. MOVE TO TARGET
@@ -648,87 +550,7 @@ async function move_to_target(){
 }*/
 
 //HELPER FUNCTIONS
-function hasLineOfSight(targetEntity, stepSize = 0.1) {
-    if (!targetEntity || !targetEntity.position) {
-        return false;
-    }
-    
-    const botPos = bot.entity.position;
-    const targetPos = targetEntity.position;
-    
-    // Calculate direction vector from bot to target
-    const direction = targetPos.minus(botPos);
-    const distance = direction.norm();
-    const normalizedDirection = direction.normalize();
-    
-    const startPos = botPos.offset(0, 1.6, 0); // Eye level
-    
-    const steps = Math.ceil(distance / stepSize);
-    
-    for (let i = 1; i < steps; i++) {
-        const t = (i * stepSize) / distance;
-        const currentPos = startPos.plus(normalizedDirection.scaled(i * stepSize));
-        
-        const block = bot.blockAt(currentPos);
-        
-        if (block && block.boundingBox === 'block') {
-            ctx.follow_min_range = 1 // lower follow range to get closer to the target than normal 
-            return false;
-        }
-    }
-    // No solid blocks found in the path
-    ctx.follow_min_range = REACH_MIN + 0.1
-    return true;
-}
 
-function checkForClosestTarget() {
-    const players = Object.values(bot.players)
-        .map(player => player.entity)
-        .filter(entity => 
-            entity && 
-            entity.type === 'player' &&
-            entity.username !== bot.username &&
-            !utils.isAlly(entity.username, ctx.allies) &&
-            entity.position
-        )
-    
-    if (players.length === 0){
-        if (ctx.target) {
-            //console.log("No enemies detected - Resetting")
-            bot_reset()
-        }
-        return
-    } 
-    
-    // Find the closest enemy player
-    let closestEnemy = null
-    let closestDistance = Infinity
-    
-    for (const player of players) {
-        const distance = bot.entity.position.distanceTo(player.position)
-        if (distance < closestDistance) {
-            closestDistance = distance
-            closestEnemy = player
-        }
-    }
-    
-    // Only engage targets within range
-    if (closestDistance > TARGETING_RANGE) {
-        if (ctx.target) {
-            //console.log(`Closest enemy ${closestEnemy.username} too far (${Math.floor(closestDistance)} blocks) - Resetting`)
-            bot_reset()
-        }
-        return
-    }
-    
-    // Check if we need to switch targets
-    if (!ctx.target || ctx.target.id !== closestEnemy.id) {
-        const previousTarget = ctx.target ? ctx.target.username : "none"
-        ctx.target = closestEnemy
-        //console.log(`Target switch: ${previousTarget} → ${ctx.target.username} at ${Math.floor(closestDistance)} blocks (closest enemy)`)
-        //attemptDrinkBuffPotions(); MARKED FOR REMOVAL - LET STATE MACHINE HANDLE IT 
-    }
-}
 
 
 
