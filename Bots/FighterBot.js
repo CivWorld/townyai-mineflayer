@@ -64,8 +64,8 @@ var follow_min_range
 //HITTING CONSTANTS
 var REACH_MIN                  = 2.85 // Minimum attack reach
 var REACH_MAX                  = 3.68 // Maximum attack reach
-var MISS_CHANCE_BASE           = 0.02 // 2% base miss chance
-const MISS_CHANCE_MAX          = 0.12 // 20% maximum miss chance
+const MISS_CHANCE_BASE           = 0.02 // 2% base miss chance
+var MISS_CHANCE_MAX          = 0.12 // 20% maximum miss chance
 const MISS_STREAK_INCREASE_MIN = 0.05 // 5% minimum increase per consecutive miss
 const MISS_STREAK_INCREASE_MAX = 0.12 // 12% maximum increase per consecutive miss
 const MISS_STREAK_RESET        = 5 // Reset miss streak after 5 attempts
@@ -232,24 +232,24 @@ bot.on('chat', (username, message) => {
                 }
                 break;
             case 'config':
-                // Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_BASE>
+                // Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_MAX>
                 if (args.length === 6) {
                     const newCPS = parseFloat(args[0]);
                     const newReachMin = parseFloat(args[1]);
                     const newReachMax = parseFloat(args[2]);
                     const newLeftRightMinMs = parseFloat(args[3]);
                     const newLeftRightMaxMs = parseFloat(args[4]);
-                    const newMissChanceBase = parseFloat(args[5]);
+                    const newMissChanceMax = parseFloat(args[5]);
                     
                     if (!isNaN(newCPS) && !isNaN(newReachMin) && !isNaN(newReachMax) && 
-                        !isNaN(newLeftRightMinMs) && !isNaN(newLeftRightMaxMs) && !isNaN(newMissChanceBase)) {
+                        !isNaN(newLeftRightMinMs) && !isNaN(newLeftRightMaxMs) && !isNaN(newMissChanceMax)) {
                         
                         CPS = newCPS;
                         REACH_MIN = newReachMin;
                         REACH_MAX = newReachMax;
                         LEFT_RIGHT_MIN_MS = newLeftRightMinMs;
                         LEFT_RIGHT_MAX_MS = newLeftRightMaxMs;
-                        MISS_CHANCE_MAX = newMissChanceBase;
+                        MISS_CHANCE_MAX = newMissChanceMax;
 
                         COOLDOWN.set('attack',800/CPS)
                         bot.chat(`Configuration updated: CPS=${CPS}, REACH_MIN=${REACH_MIN}, REACH_MAX=${REACH_MAX}, LEFT_RIGHT_MIN_MS=${LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${MISS_CHANCE_MAX}`);
