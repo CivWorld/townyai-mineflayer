@@ -7,7 +7,7 @@ const bot = mineflayer.createBot({
   host: process.env.MC_HOST || 'localhost', // DO NOT PUSH HARDCODED CHANGES TO THESE VALUES.
   port: process.env.MC_PORT || 25565, // DO NOT PUSH HARDCODED CHANGES TO THESE VALUES.
   username: 'ADMINBOT',
-  version: '1.21.8',
+  version: process.env.MC_VERSION || '1.21.4',
   auth: 'offline'
 })
 
@@ -50,7 +50,7 @@ function launchCurrent() {
   const child = spawn(process.execPath, [path.join(__dirname, file), ...current.args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
-    env: { ...process.env, BOTNAME: current.botName, MC_HOST: process.env.MC_HOST, MC_PORT: process.env.MC_PORT }
+    env: { ...process.env, BOTNAME: current.botName, MC_HOST: process.env.MC_HOST, MC_PORT: process.env.MC_PORT, MC_VERSION: process.env.MC_VERSION }
   });
   current.child = child;
 
