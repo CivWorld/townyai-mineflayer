@@ -62,8 +62,8 @@ function launchCurrent() {
     // If we already moved on due to ACK, ignore late exit
     if (!current || current.child !== child) return;
 
-    if (code === 101 && current.attempts < MAX_RETRIES) {
-      console.log(`[${current.botName}] connect failed (code 101). Retry in ${RETRY_DELAY_MS}ms`);
+    if (code === 101 || code === 0 || code === null && current.attempts < MAX_RETRIES) {
+      console.log(`[${current.botName}] connect failed (code ${code}). Retry in ${RETRY_DELAY_MS}ms`);
       setTimeout(() => {
         current.attempts++;
         launchCurrent();
