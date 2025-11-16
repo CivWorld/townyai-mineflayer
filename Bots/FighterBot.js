@@ -234,17 +234,17 @@ bot.on('chat', (username, message) => {
                 }
                 break;
             case 'config':
-                // Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_BASE>
+                // Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_MAX>
                 if (args.length === 6) {
                     const newCPS = parseFloat(args[0]);
                     const newReachMin = parseFloat(args[1]);
                     const newReachMax = parseFloat(args[2]);
                     const newLeftRightMinMs = parseFloat(args[3]);
                     const newLeftRightMaxMs = parseFloat(args[4]);
-                    const newMissChanceBase = parseFloat(args[5]);
+                    const newMissChanceMax = parseFloat(args[5]);
                     
                     if (!isNaN(newCPS) && !isNaN(newReachMin) && !isNaN(newReachMax) && 
-                        !isNaN(newLeftRightMinMs) && !isNaN(newLeftRightMaxMs) && !isNaN(newMissChanceBase)) {
+                        !isNaN(newLeftRightMinMs) && !isNaN(newLeftRightMaxMs) && !isNaN(newMissChanceMax)) {
                         
                         C.CPS = newCPS;
                         C.REACH_MIN = newReachMin;
@@ -255,6 +255,7 @@ bot.on('chat', (username, message) => {
 
                         ctx.cooldowns.set('attack',800/C.CPS)
                         bot.chat(`Configuration updated: CPS=${C.CPS}, REACH_MIN=${C.REACH_MIN}, REACH_MAX=${C.REACH_MAX}, LEFT_RIGHT_MIN_MS=${C.LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${C.LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${C.MISS_CHANCE_MAX}`);
+
                     } else {
                         bot.chat('Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_MAX> - All values must be numbers');
                     }
