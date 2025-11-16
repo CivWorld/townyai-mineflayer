@@ -251,7 +251,7 @@ bot.on('chat', (username, message) => {
                         C.REACH_MAX = newReachMax;
                         C.LEFT_RIGHT_MIN_MS = newLeftRightMinMs;
                         C.LEFT_RIGHT_MAX_MS = newLeftRightMaxMs;
-                        C.MISS_CHANCE_MAX = newMissChanceBase;
+                        C.MISS_CHANCE_MAX = newMissChanceMax;
 
                         ctx.cooldowns.set('attack',800/C.CPS)
                         bot.chat(`Configuration updated: CPS=${C.CPS}, REACH_MIN=${C.REACH_MIN}, REACH_MAX=${C.REACH_MAX}, LEFT_RIGHT_MIN_MS=${C.LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${C.LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${C.MISS_CHANCE_MAX}`);
