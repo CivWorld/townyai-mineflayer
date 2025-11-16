@@ -5,6 +5,9 @@ const armorManager = require('mineflayer-armor-manager')
 const Vec3 = require('vec3')
 const utils = require('./shared/utils')
 const combat = require('./shared/combat')
+const survival = require('./shared/survival')
+const navigation = require('./shared/navigation')
+const flagging = require('./shared/flagging')
 
 function getArg(flag, fallback = undefined) {
 const i = process.argv.indexOf(flag);
@@ -18,7 +21,7 @@ const bot = mineflayer.createBot({
   host: process.env.MC_HOST || 'localhost', // DO NOT PUSH HARDCODED CHANGES TO THESE VALUES.
   port: process.env.MC_PORT || 25565, // DO NOT PUSH HARDCODED CHANGES TO THESE VALUES.
   username: BOTNAME,
-  version: '1.21.8',
+  version: process.env.MC_VERSION || '1.21.4',
   auth: 'offline', // or 'mojang' for older versions
 });
 
@@ -27,14 +30,13 @@ const bot = mineflayer.createBot({
 bot.loadPlugin(pathfinder)
 bot.loadPlugin(armorManager)
 
-  const ctx = { //bot context
-    allies: ['ADMINBOT'],   // replaces ALLY_LIST
+  var ctx = { //bot context
+    allies: [],   // replaces ALLY_LIST
     allyMaxDistance: 30,    // replaces ALLY_MAX_DISTANCE
     flags: [],              // replaces flagQueue
     cooldowns: new Map(),
     lastAction: new Map(),
 
-    //need to refactor to use these instead
     state: 'IDLE',
     target: null,
     consecutiveMisses: 0,
@@ -43,14 +45,7 @@ bot.loadPlugin(armorManager)
 
   }
 
-  //VARIABLES & CONSTANTS
-//var state ="IDLE"
-//var target = null
-//var consecutiveMisses = 0 // Track consecutive misses for progressive miss chance
-//var strafeDirection = null // Current strafe direction (null, 'left', 'right', 'back')
-//var follow_min_range
-
-const C = {
+var C = { //combat variables
     REACH_MIN: 2.85,
     REACH_MAX: 3.68,
     MISS_CHANCE_BASE: 0.02,
@@ -63,34 +58,17 @@ const C = {
     BACK_MS: 500,
     JUMP_CHANCE: 0.02,
     JUMP_HOLD_MS: 50,
-    TARGETING_RANGE: 25
+    TARGETING_RANGE: 25,
+    CPS: 13 //used to calculate attack cooldown
+  }
+
+const S = { //survival constants
+    HEALTH_THRESHOLD: 10,
+    HUNGER_THRESHOLD: 18
   }
   
 
-
-//HITTING CONSTANTS
-//var REACH_MIN                  = 2.85 // Minimum attack reach
-//var REACH_MAX                  = 3.68 // Maximum attack reach
-//var MISS_CHANCE_BASE           = 0.02 // 2% base miss chance
-//const MISS_CHANCE_MAX          = 0.12 // 20% maximum miss chance
-//const MISS_STREAK_INCREASE_MIN = 0.05 // 5% minimum increase per consecutive miss
-//const MISS_STREAK_INCREASE_MAX = 0.12 // 12% maximum increase per consecutive miss
-//const MISS_STREAK_RESET        = 5 // Reset miss streak after 5 attempts
-
-//STRAFING CONSTANTS
-//var LEFT_RIGHT_MIN_MS  = 1000;   // 1s
-//var LEFT_RIGHT_MAX_MS  = 3000;   // 3s
-//const BACK_MS          = 500;    // 0.5s
-//const JUMP_CHANCE      = 0.02;   // 2%
-//const JUMP_HOLD_MS     = 50;     // short tap
-var CPS                = 13 //used to calculate attack cooldown
-const HEALTH_THRESHOLD = 10
-const HUNGER_THRESHOLD = 18
-//const COOLDOWN = new Map()
-//const LASTACTION = new Map()
-
-// COOLDOWNS, time in miliseconds 
-ctx.cooldowns.set('attack',800/CPS) //time between attacks, modify via CPS const
+ctx.cooldowns.set('attack',800/C.CPS) //time between attacks, modify via CPS const
 ctx.cooldowns.set('stateprint',500) // time between console output of state
 ctx.cooldowns.set('gearing',500) // time for gearing process
 ctx.cooldowns.set('healing',1000) // time between healing attempts
@@ -165,7 +143,7 @@ bot.on('chat', (username, message) => {
     case 'gearup':
         ctx.state = "gearing";
         bot.chat("Recalling gearing up state and equipping armor.");
-        gear();
+        survival.gear(bot, ctx);
         break;
     }
 });
@@ -185,8 +163,8 @@ bot.on('chat', (username, message) => {
                         const y = parseFloat(args[1]);
                         const z = parseFloat(args[2]);
                         if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                            addFlag(new Vec3(x, y, z));
-                            if (ctx.flags.length === 1) moveToFlag(); // If first flag, start moving
+                            flagging.addFlag(bot, ctx, new Vec3(x, y, z));
+                            if (ctx.flags.length === 1) flagging.moveToFlag(bot, ctx); // If first flag, start moving
                         } else {
                             bot.chat('Usage: addflag <x> <y> <z>');
                         }
@@ -201,9 +179,9 @@ bot.on('chat', (username, message) => {
                         const y = parseFloat(args[1]);
                         const z = parseFloat(args[2]);
                         if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                            removeFlagByCoords(x, y, z);
+                            flagging.removeFlagByCoords(bot, ctx, x, y, z);
                             // After removal, move to next flag if available
-                            if (ctx.flags.length > 0) moveToFlag();
+                            if (ctx.flags.length > 0) flagging.moveToFlag(bot, ctx);
                         } else {
                             bot.chat('Usage: removeflag <x> <y> <z>');
                         }
@@ -213,7 +191,7 @@ bot.on('chat', (username, message) => {
                     break;
                 case 'goto':
                     // Usage: goto (moves to first flag in queue)
-                    moveToFlag();
+                    flagging.moveToFlag(bot, ctx);
                     break;
 
             case 'addally':
@@ -268,15 +246,15 @@ bot.on('chat', (username, message) => {
                     if (!isNaN(newCPS) && !isNaN(newReachMin) && !isNaN(newReachMax) && 
                         !isNaN(newLeftRightMinMs) && !isNaN(newLeftRightMaxMs) && !isNaN(newMissChanceBase)) {
                         
-                        CPS = newCPS;
+                        C.CPS = newCPS;
                         C.REACH_MIN = newReachMin;
                         C.REACH_MAX = newReachMax;
                         C.LEFT_RIGHT_MIN_MS = newLeftRightMinMs;
                         C.LEFT_RIGHT_MAX_MS = newLeftRightMaxMs;
                         C.MISS_CHANCE_MAX = newMissChanceBase;
 
-                        ctx.cooldowns.set('attack',800/CPS)
-                        bot.chat(`Configuration updated: CPS=${CPS}, REACH_MIN=${C.REACH_MIN}, REACH_MAX=${C.REACH_MAX}, LEFT_RIGHT_MIN_MS=${C.LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${C.LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${C.MISS_CHANCE_MAX}`);
+                        ctx.cooldowns.set('attack',800/C.CPS)
+                        bot.chat(`Configuration updated: CPS=${C.CPS}, REACH_MIN=${C.REACH_MIN}, REACH_MAX=${C.REACH_MAX}, LEFT_RIGHT_MIN_MS=${C.LEFT_RIGHT_MIN_MS}, LEFT_RIGHT_MAX_MS=${C.LEFT_RIGHT_MAX_MS}, MISS_CHANCE_MAX=${C.MISS_CHANCE_MAX}`);
                     } else {
                         bot.chat('Usage: config <CPS> <REACH_MIN> <REACH_MAX> <LEFT_RIGHT_MIN_MS> <LEFT_RIGHT_MAX_MS> <MISS_CHANCE_MAX> - All values must be numbers');
                     }
@@ -315,26 +293,26 @@ bot.on('physicsTick', async () => {
             //console.log(bot.entity.effects)
             // 1. Equip armor
             if(ctx.state === "gearing"){
-                gear()
+                survival.gear(bot, ctx)
             }
             
             // 2. buff
-            else if ((!bot.entity.effects[4] && hasPotion(36)) || 
-                     (!bot.entity.effects[0] && hasPotion(15)) || 
-                     (!bot.entity.effects[11] && hasPotion(12))) {
-                DrinkBuffPotions();
+            else if ((!bot.entity.effects[4] && survival.hasPotion(bot, 36)) || 
+                     (!bot.entity.effects[0] && survival.hasPotion(bot, 15)) || 
+                     (!bot.entity.effects[11] && survival.hasPotion(bot, 12))) {
+                survival.DrinkBuffPotions(bot, ctx);
             }
             // 3. Heal 
-            else if(bot.health < HEALTH_THRESHOLD && canHealSelf()){
-                heal()
+            else if(bot.health < S.HEALTH_THRESHOLD && survival.canHealSelf(bot)){
+                survival.heal(bot, ctx, S)
             }
             // 4. Eat food 
-            else if(bot.food <= HUNGER_THRESHOLD && canEatFood() || ctx.state == "EATING"){
-                eat()
+            else if(bot.food <= S.HUNGER_THRESHOLD && survival.canEatFood(bot) || ctx.state == "EATING"){
+                survival.eat(bot, ctx, S)
             }
             // 5. Return to ally
-            else if(isTooFarFromAlly()){
-                return_to_ally()
+            else if(navigation.isTooFarFromAlly(bot, ctx)){
+                navigation.returnToAlly(bot, ctx)
             }
             // 6. Attack target 
             else if(ctx.target && ctx.target.position && bot.entity.position.distanceTo(ctx.target.position) <= C.REACH_MAX && combat.hasLineOfSight(bot, ctx, ctx.target, C)){
@@ -342,7 +320,7 @@ bot.on('physicsTick', async () => {
             }
             // 7. Move to target 
             else if(ctx.target && ctx.target.position){
-                move_to_target()
+                navigation.moveToTarget(bot, ctx, bot_reset)
             }
         }
         //logging
@@ -358,254 +336,7 @@ bot.on('physicsTick', async () => {
     }
 });
 
-//STATE FUNCTIONS
 
-// 1. EQUIP ARMOR
-function gear(){
-    ctx.state = "GEARING UP"
-    
-    // Equip armor
-    bot.armorManager.equipAll().catch(() => {})
-    
-    // Equip strongest sword
-    utils.getStrongestSword(bot)
-    
-    // Reset state after gearing cooldown and ensure sword is equipped
-    if (canDoAction("gearing")) {
-        ctx.state = "IDLE"
-        utils.getStrongestSword(bot)
-    }
-}
-
-// 2. HEAL
-async function heal() {
-    if (ctx.state !="HEALING" && canDoAction("healing")){
-        ctx.state = "HEALING"
-
-        // Find a splash instant health potion with potionId 25 in inventory
-        const splashPotions = bot.inventory.items().filter(item => item.name === 'splash_potion');
-        let foundPotion = null;
-        for (const item of splashPotions) {
-            const potionId = utils.getPotionId(item);
-            if (potionId === 25) {
-                foundPotion = item;
-                break;
-            }
-        }
-        if (!foundPotion) {
-            //console.log('No healing splash potion with potionId 25 found');
-            ctx.state = "IDLE";
-            return;
-        }
-        await bot.equip(foundPotion, 'hand');
-        
-        try {
-            // Add a short random delay before healing (between 10 and 11 ticks) 
-            const ticks = Math.floor(Math.random() * 10) + 1;
-            //await bot.waitForTicks(ticks);
-          
-            // Turn away from target if there is one and run away while healing
-            if (ctx.target) {
-                // Calculate direction away from target
-                await utils.lookAwayFromTarget(bot, ctx.target)
-                
-                // Start sprinting away from target
-                bot.setControlState('sprint', true)
-                bot.setControlState('forward', true)
-                //console.log('Running away from target while healing')
-                await bot.waitForTicks(ticks)
-            } 
-            
-            if(bot.health < 7){
-                await bot.activateItem(false, new Vec3(0, -1, 0))
-                ctx.cooldowns.set('healing',500) //double pot
-            }else{
-                await bot.activateItem(false, new Vec3(0, -1, 0))
-                ctx.cooldowns.set('healing',1000)
-            }
-
-            // Stop moving after healing
-            bot.setControlState('sprint', false)
-            bot.setControlState('forward', false)
-
-            // Immediately resume normal state after healing and re-equip sword
-            ctx.state = "IDLE"
-            utils.getStrongestSword(bot)
-            //console.log('Healing complete, resuming combat')
-        } catch (error) {
-            //console.log('Error during healing:', error.message)
-            // Stop movement on error
-            bot.setControlState('sprint', false)
-            bot.setControlState('forward', false)
-            ctx.state = "IDLE"
-            utils.getStrongestSword(bot)
-        }
-    }
-}
-
-// 3. EAT FOOD
-async function eat() {
-    //console.log(bot.food)
-    // Start eating if not already eating and cooldown allows
-    if (ctx.state !== "EATING" && canDoAction("eating")) {
-        ctx.state = "EATING"
-        const food = await utils.getBestFood(bot)
-        
-        if (!food) {
-            //console.log('No valid food found in inventory')
-            ctx.state = "IDLE"
-            return
-        }
-        
-        //console.log('Started eating food - will jump and face away from target')
-        if (ctx.target && ctx.target.position) { // Face away from target and move forward
-            try {
-                await utils.lookAwayFromTarget(bot, ctx.target)
-                bot.setControlState('forward', true);
-                bot.setControlState('jump', true);
-                bot.setControlState('jump', false);
-            } catch (error) {
-            }
-        } else {
-            bot.setControlState('forward', false);
-        }
-        
-    }
-    if (bot.food > HUNGER_THRESHOLD) {
-        //console.log('No longer hungry, stopping eating')
-        ctx.state = "IDLE"
-        utils.getStrongestSword(bot)
-        return
-    }
-    else{
-        //console.log(bot.food)
-    }
-    bot.activateItem()
-
-}
-
-// 4. RETURN TO ALLY
-function return_to_ally(){
-    ctx.state = "RETURNING TO ALLY"
-    
-    const nearestAlly = utils.getNearestAlly(bot, ctx.allies)
-    if (!nearestAlly) {
-        //console.log("No ally found to return to")
-        ctx.state = "IDLE"
-        return
-    }
-    
-    const distance = bot.entity.position.distanceTo(nearestAlly.position)
-    //console.log(`Returning to ally ${nearestAlly.username} (${Math.floor(distance)} blocks away)`)
-    
-    // Reset current target since we're prioritizing ally proximity
-    ctx.target = null
-    
-    // Sprint to ally
-    bot.setControlState('sprint', true)
-    bot.pathfinder.setGoal(new goals.GoalFollow(nearestAlly, 3)) // Follow within 3 blocks
-}
-
-
-  
-
-// 6. MOVE TO TARGET
-async function move_to_target(){
-    // Check if target still exists and has position
-    if (!ctx.target || !ctx.target.position) {
-        //console.log("Target lost during movement")
-        bot_reset()
-        return
-    }
-    
-    ctx.state = "MOVING TO TARGET"
-    
-    // Calculate the minimum attack range (just outside of REACH_MIN)
-    //const minAttackRange = REACH_MIN + 0.1 // Small buffer to avoid getting inside the target
-    
-    // Start moving to target, but stop at min attack range
-    bot.setControlState('sprint', true)
-    bot.pathfinder.setGoal(new goals.GoalFollow(ctx.target, ctx.follow_min_range))
-    
-    // Constantly swing sword if target is within 10 blocks
-    if (ctx.target && ctx.target.position) {
-        const distance = bot.entity.position.distanceTo(ctx.target.position)
-        if (distance <= 10 && canDoAction("movementSwing")) {
-            // Look at target and swing (no damage)
-            const eyePos = ctx.target.position.offset(0, 1.62, 0);
-            bot.lookAt(eyePos);
-            bot.swingArm()
-            //console.log("Movement swinging - target within 10 blocks")
-        }
-    }
-}
-
-/*function idle() {
-    // Look in a random direction
-    const yaw = Math.random() * Math.PI * 2 // Random horizontal rotation
-    const pitch = (Math.random() - 0.5) * 0.5 // Slight up/down look
-    
-    bot.look(yaw, pitch)
-    //console.log("Looking around for targets...")
-}*/
-
-//HELPER FUNCTIONS
-
-
-
-
-
-function isTooFarFromAlly() {
-    const nearestAlly = utils.getNearestAlly(bot, ctx.allies)
-    if (!nearestAlly) return false
-    const distance = bot.entity.position.distanceTo(nearestAlly.position)
-    return distance > ctx.allyMaxDistance
-  }
-
-// Shared helper function for getting items in inventory
-
-/*async function GetItemInInventory(itemName) { UNUSED? 
-    let found_item = bot.inventory.items().find(item => item.name === itemName)
-    if (found_item){
-        await bot.equip(found_item, 'hand')
-        return true
-    }else{
-        return false
-    }
-}
-
-// Shared helper function for checking if item exists in inventory
-function hasItemInInventory(itemName) {
-    return bot.inventory.items().some(item => item.name === itemName)
-}*/
-
-
-
-function canHealSelf() { //TO BE REPLACED BY hasPotion(ID)
-    // Only return true if splash potion with potionId 25 is present
-    const splashPotions = bot.inventory.items().filter(item => item.name === 'splash_potion');
-    for (const item of splashPotions) {
-        if (utils.getPotionId(item) === 25) return true;
-    }
-    return false;
-}
-
-function hasPotion(id) {
-    const potion= bot.inventory.items().filter(item => item.name === 'potion');
-    for (const item of potion) {
-        console.log(utils.getPotionId(item))
-        if (utils.getPotionId(item) === id) return true;
-    }
-    
-    return false;
-}
-
-// Check if bot has any valid food (wtf is this lmao)
-function canEatFood() {
-    return utils.getBestFood(bot)
-}
-
-// Find the best food item to eat (prioritizes higher nutrition)
 function canDoAction(action) {
     const now = Date.now()
     const last = ctx.lastAction.get(action) || 0
@@ -630,97 +361,4 @@ function bot_reset(){
     //console.log("RESETTING")
     ctx.state = "IDLE"
     //attemptDrinkBuffPotions(); MARKED FOR REMOVAL - LET STATE MACHINE HANDLE IT 
-}
-// Attempt to drink buff potions (IDs: 36, 15, 12) with cooldowns
-
-async function DrinkBuffPotions(){
-    if(ctx.state == "DRINKINGFRES"){
-        if(bot.entity.effects[11]){
-            bot.chat("drank fres")
-            ctx.state = "IDLE"
-        }
-        bot.activateItem()
-        return
-    }
-    if(ctx.state == "DRINKINGSPEED"){
-        if(bot.entity.effects[0]){
-            bot.chat("drank speed")
-            ctx.state = "IDLE"
-        }
-        bot.activateItem()
-        return
-    }
-    if(ctx.state == "DRINKINGSTRENGTH"){
-        if(bot.entity.effects[4]){
-            bot.chat("drank strength")
-            ctx.state = "IDLE"
-        }
-        bot.activateItem()
-        return
-    }    
-    const potionsToDrink = [
-        { potion_id: 36, effect_id:4},
-        { potion_id: 15, effect_id:0},
-        { potion_id: 12, effect_id:11}
-    ];
-    for (const { potion_id, effect_id } of potionsToDrink) {
-        if(!bot.entity.effects[effect_id]){
-            console.log("missing " + effect_id)
-            const potions = bot.inventory.items().filter(item => item.name === 'potion' && utils.getPotionId(item) === potion_id);
-            if (potions.length > 0) {
-                await bot.equip(potions[0], 'hand');
-                switch (effect_id) {
-                    case 11:
-                        ctx.state = "DRINKINGFRES";
-                        break;
-                    case 0:
-                        ctx.state = "DRINKINGSPEED";
-                        break;
-                    case 4:
-                        ctx.state = "DRINKINGSTRENGTH";
-                        break;
-                }
-            }else{
-                bot.chat("no potion of id" + potion_id)
-            }
-
-
-        }
-    }
-}
-
-function addFlag(vec) {
-    ctx.flags.push(vec);
-    bot.chat(`Flag added: (${vec.x}, ${vec.y}, ${vec.z})`);
-}
-
-function removeFlagByCoords(x, y, z) {
-    if (ctx.flags.length === 0) {
-        bot.chat('No flags to remove.');
-        return;
-    }
-    const idx = ctx.flags.findIndex(f => f.x === x && f.y === y && f.z === z);
-    if (idx === -1) {
-        bot.chat('No matching flag found.');
-        return;
-    }
-    const removed = ctx.flags.splice(idx, 1)[0];
-    bot.chat(`Flag removed: (${removed.x}, ${removed.y}, ${removed.z})`);
-}
-
-function moveToFlag() {
-    if (ctx.flags.length === 0) {
-        bot.chat('No flags in queue.');
-        return;
-    }
-    
-    if (!canDoAction("flagGoal")) {
-        return; // Still on cooldown
-    }
-    
-    const flag = ctx.flags[0];
-    ctx.state = "MOVING TO FLAG";
-    bot.setControlState('sprint', true);
-    bot.pathfinder.setGoal(new goals.GoalBlock(flag.x, flag.y, flag.z, 1));
-    bot.chat(`Moving to flag: (${flag.x}, ${flag.y}, ${flag.z})`);
 }
