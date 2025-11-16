@@ -10,7 +10,7 @@ Starting a townyAI-mineflayer instance is as simple as configuring the IP of the
 
 ### AdminBot
 
-this bot simply recieves orders from the TownyAI plugin to instantiate other bots, acting as the most reliablle connection between the TownyAI plugin and the mineflayer service. it makes reconnection attempts and can queue bot spawns to prevent failiure when overloaded. this bot is intended to be always online and the townyAI plugin cannot function properly without it.
+this bot simply receives orders from the TownyAI plugin to instantiate other bots, acting as the most reliable connection between the TownyAI plugin and the mineflayer service. it makes reconnection attempts and can queue bot spawns to prevent failure when overloaded. this bot is intended to be always online and the townyAI plugin cannot function properly without it.
 
 ### TownleaderBot
 
